@@ -142,6 +142,140 @@
 	};
 
 	// ==========================================
+	// === USER CONFIG PERSISTENCE / 用户可调配置持久化 ===
+	// ==========================================
+
+	// 新增：翻页节奏（用户可配置）默认值
+	CONFIG.PAGE_FLIP_DELAY_MIN = 300;   // 翻页最小等待 (ms)
+	CONFIG.PAGE_FLIP_DELAY_MAX = 1000;  // 翻页最大等待 (ms)
+
+	const USER_CONFIG_KEYS = [
+		'DATE_CUTOFF',
+		'RESET_WAIT_MIN_MS','RESET_WAIT_MAX_MS',
+		'MIN_DELAY','MAX_DELAY',
+		'CONTINUE_SEARCH_WAIT_MIN','CONTINUE_SEARCH_WAIT_MAX',
+		'PAGE_FLIP_DELAY_MIN','PAGE_FLIP_DELAY_MAX'
+	];
+
+	const USER_CONFIG_STORAGE_KEY = 'usVisaAutoUserConfigV1';
+
+	function saveUserConfig(partial){
+		try {
+			const existing = loadRawUserConfig();
+			const merged = {...existing, ...partial};
+			localStorage.setItem(USER_CONFIG_STORAGE_KEY, JSON.stringify(merged));
+			log('💾 已保存用户自定义配置');
+		} catch(e){
+			console.error('保存用户配置失败', e);
+		}
+	}
+
+	function loadRawUserConfig(){
+		try {
+			return JSON.parse(localStorage.getItem(USER_CONFIG_STORAGE_KEY) || '{}');
+		} catch(e){
+			console.warn('读取用户配置失败，使用默认', e); return {}; }
+	}
+
+	function applyUserConfig(){
+		const raw = loadRawUserConfig();
+		let applied = 0;
+		USER_CONFIG_KEYS.forEach(k=>{
+			if(Object.prototype.hasOwnProperty.call(raw,k)) {
+				if(k === 'DATE_CUTOFF') {
+					const d = new Date(raw[k]);
+					if(!isNaN(d.getTime())) { CONFIG.DATE_CUTOFF = d; applied++; }
+				} else if(Number.isFinite(raw[k])) {
+					CONFIG[k] = raw[k]; applied++;
+				}
+			}
+		});
+		if(applied) log(`🔧 已应用用户自定义配置 ${applied} 项`);
+	}
+
+	applyUserConfig();
+
+	// === 配置面板 ===
+	function createConfigPanel(){
+		if(document.getElementById('usVisaAutoConfigPanel')) return; // 避免重复
+		const panel = document.createElement('div');
+		panel.id = 'usVisaAutoConfigPanel';
+		panel.style.cssText = `position:fixed;top:500px;right:20px;z-index:9999;background:rgba(0,0,0,0.85);color:#fff;font:12px monospace;border:1px solid #444;padding:8px;width:320px;border-radius:6px;line-height:1.4;`
+		panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+			<span style="font-weight:bold;">⚙️ 参数配置</span>
+			<button id="cfgToggleBtn" style="background:#333;color:#fff;border:1px solid #555;font-size:11px;cursor:pointer;padding:2px 6px;">收起</button>
+		</div>
+		<div id="cfgBody">
+			<label style='display:block;margin-top:4px;'>截止日期 <input type='date' id='cfg_date_cutoff' style='width:140px;'></label>
+			<label style='display:block;margin-top:4px;'>重置等待(ms) 最小 <input type='number' id='cfg_reset_min' style='width:80px;'> 最大 <input type='number' id='cfg_reset_max' style='width:80px;'></label>
+			<label style='display:block;margin-top:4px;'>基础延迟(ms) 最小 <input type='number' id='cfg_base_min' style='width:80px;'> 最大 <input type='number' id='cfg_base_max' style='width:80px;'></label>
+			<label style='display:block;margin-top:4px;'>循环等待(秒) 最小 <input type='number' id='cfg_loop_min' style='width:80px;'> 最大 <input type='number' id='cfg_loop_max' style='width:80px;'></label>
+			<label style='display:block;margin-top:4px;'>翻页延迟(ms) 最小 <input type='number' id='cfg_page_min' style='width:80px;'> 最大 <input type='number' id='cfg_page_max' style='width:80px;'></label>
+			<div style='margin-top:6px;display:flex;gap:6px;'>
+				<button id='cfgSaveBtn' style='flex:1;background:#2d7fff;border:0;color:#fff;cursor:pointer;padding:4px 0;border-radius:4px;'>保存</button>
+				<button id='cfgResetBtn' style='flex:1;background:#aa2222;border:0;color:#fff;cursor:pointer;padding:4px 0;border-radius:4px;'>重置</button>
+			</div>
+			<div id='cfgStatus' style='margin-top:4px;color:#0f0;font-size:11px;'></div>
+		</div>`;
+
+		function pad(n){return n.toString().padStart(2,'0');}
+		function yyyyMMdd(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
+
+		document.body.appendChild(panel);
+
+		// 初始化表单值
+		const dateInput = panel.querySelector('#cfg_date_cutoff');
+		dateInput.value = yyyyMMdd(CONFIG.DATE_CUTOFF);
+		panel.querySelector('#cfg_reset_min').value = CONFIG.RESET_WAIT_MIN_MS;
+		panel.querySelector('#cfg_reset_max').value = CONFIG.RESET_WAIT_MAX_MS;
+		panel.querySelector('#cfg_base_min').value = CONFIG.MIN_DELAY;
+		panel.querySelector('#cfg_base_max').value = CONFIG.MAX_DELAY;
+		panel.querySelector('#cfg_loop_min').value = Math.round(CONFIG.CONTINUE_SEARCH_WAIT_MIN/1000);
+		panel.querySelector('#cfg_loop_max').value = Math.round(CONFIG.CONTINUE_SEARCH_WAIT_MAX/1000);
+		panel.querySelector('#cfg_page_min').value = CONFIG.PAGE_FLIP_DELAY_MIN;
+		panel.querySelector('#cfg_page_max').value = CONFIG.PAGE_FLIP_DELAY_MAX;
+
+		panel.querySelector('#cfgToggleBtn').onclick = () => {
+			const body = panel.querySelector('#cfgBody');
+			if(body.style.display === 'none') { body.style.display='block'; panel.querySelector('#cfgToggleBtn').textContent='收起'; }
+			else { body.style.display='none'; panel.querySelector('#cfgToggleBtn').textContent='展开'; }
+		};
+
+		panel.querySelector('#cfgResetBtn').onclick = () => {
+			localStorage.removeItem(USER_CONFIG_STORAGE_KEY);
+			applyUserConfig();
+			panel.remove();
+			createConfigPanel();
+			log('♻️ 已恢复默认参数');
+		};
+
+		panel.querySelector('#cfgSaveBtn').onclick = () => {
+			const newCfg = {};
+			try {
+				newCfg.DATE_CUTOFF = new Date(dateInput.value + 'T00:00:00');
+				newCfg.RESET_WAIT_MIN_MS = parseInt(panel.querySelector('#cfg_reset_min').value)||CONFIG.RESET_WAIT_MIN_MS;
+				newCfg.RESET_WAIT_MAX_MS = parseInt(panel.querySelector('#cfg_reset_max').value)||CONFIG.RESET_WAIT_MAX_MS;
+				newCfg.MIN_DELAY = parseInt(panel.querySelector('#cfg_base_min').value)||CONFIG.MIN_DELAY;
+				newCfg.MAX_DELAY = parseInt(panel.querySelector('#cfg_base_max').value)||CONFIG.MAX_DELAY;
+				newCfg.CONTINUE_SEARCH_WAIT_MIN = (parseInt(panel.querySelector('#cfg_loop_min').value)||Math.round(CONFIG.CONTINUE_SEARCH_WAIT_MIN/1000))*1000;
+				newCfg.CONTINUE_SEARCH_WAIT_MAX = (parseInt(panel.querySelector('#cfg_loop_max').value)||Math.round(CONFIG.CONTINUE_SEARCH_WAIT_MAX/1000))*1000;
+				newCfg.PAGE_FLIP_DELAY_MIN = parseInt(panel.querySelector('#cfg_page_min').value)||CONFIG.PAGE_FLIP_DELAY_MIN;
+				newCfg.PAGE_FLIP_DELAY_MAX = parseInt(panel.querySelector('#cfg_page_max').value)||CONFIG.PAGE_FLIP_DELAY_MAX;
+				saveUserConfig(newCfg);
+				applyUserConfig();
+				panel.querySelector('#cfgStatus').textContent = '✅ 已保存';
+				setTimeout(()=> panel.querySelector('#cfgStatus').textContent='', 2000);
+			} catch(e){
+				panel.querySelector('#cfgStatus').textContent = '❌ 保存失败';
+				console.error(e);
+			}
+		};
+
+		log('⚙️ 参数配置面板已创建');
+	}
+
+
+	// ==========================================
 	// === LOGGING & UTILITIES / 日志和工具 ===
 	// ==========================================
 	
@@ -704,6 +838,7 @@
 
 	async function clickNextPage() {
 		// 尝试寻找下一页按钮
+		const pageDelay = () => wait(rand(CONFIG.PAGE_FLIP_DELAY_MIN, CONFIG.PAGE_FLIP_DELAY_MAX));
 		const trySelectors = [
 			"button[aria-label='Next']",
 			"button[title='Next']",
@@ -717,6 +852,7 @@
 			const btn = document.querySelector(s);
 			if(btn && !(btn.disabled || btn.className.toLowerCase().includes('disabled'))) {
 				await humanClick(btn);
+				await pageDelay();
 				log('✓ 通过选择器点击了下一页:', s);
 				return true;
 			}
@@ -727,6 +863,7 @@
 			.filter(n => /next|>|下一页/i.test((n.textContent||'').toLowerCase()));
 		if(textButtons.length) {
 			await humanClick(textButtons[0]);
+			await pageDelay();
 			log('✓ 通过文本匹配点击了下一页');
 			return true;
 		}
