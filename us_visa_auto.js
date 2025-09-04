@@ -193,7 +193,7 @@
 		if(applied) log(`🔧 已应用用户自定义配置 ${applied} 项`);
 	}
 
-	applyUserConfig();
+	// 注意：applyUserConfig() 需要在 LogStorage 初始化之后再调用，避免日志写入报错
 
 	// === 配置面板 ===
 	function createConfigPanel(){
@@ -205,17 +205,53 @@
 			<span style="font-weight:bold;">⚙️ 参数配置</span>
 			<button id="cfgToggleBtn" style="background:#333;color:#fff;border:1px solid #555;font-size:11px;cursor:pointer;padding:2px 6px;">收起</button>
 		</div>
+		<style>
+			#usVisaAutoConfigPanel .cfg-row{display:flex;align-items:center;gap:6px;margin-top:4px;}
+			#usVisaAutoConfigPanel .cfg-label{width:105px;text-align:right;color:#ddd;flex-shrink:0;}
+			#usVisaAutoConfigPanel input[type=date],
+			#usVisaAutoConfigPanel input[type=number]{background:#111;border:1px solid #444;color:#fff;font:12px monospace;padding:2px 4px;border-radius:3px;}
+			#usVisaAutoConfigPanel input[type=number]{width:72px;}
+			#usVisaAutoConfigPanel input[type=date]{width:145px;}
+			#usVisaAutoConfigPanel .cfg-sep{color:#888;font-size:11px;}
+			#usVisaAutoConfigPanel .cfg-actions{margin-top:8px;display:flex;gap:8px;}
+			#usVisaAutoConfigPanel .cfg-actions button{flex:1;padding:5px 0;font-size:12px;font-weight:bold;border-radius:4px;cursor:pointer;border:0;}
+			#usVisaAutoConfigPanel #cfgSaveBtn{background:#2d7fff;color:#fff;}
+			#usVisaAutoConfigPanel #cfgResetBtn{background:#aa2222;color:#fff;}
+		</style>
 		<div id="cfgBody">
-			<label style='display:block;margin-top:4px;'>截止日期 <input type='date' id='cfg_date_cutoff' style='width:140px;'></label>
-			<label style='display:block;margin-top:4px;'>重置等待(ms) 最小 <input type='number' id='cfg_reset_min' style='width:80px;'> 最大 <input type='number' id='cfg_reset_max' style='width:80px;'></label>
-			<label style='display:block;margin-top:4px;'>基础延迟(ms) 最小 <input type='number' id='cfg_base_min' style='width:80px;'> 最大 <input type='number' id='cfg_base_max' style='width:80px;'></label>
-			<label style='display:block;margin-top:4px;'>循环等待(秒) 最小 <input type='number' id='cfg_loop_min' style='width:80px;'> 最大 <input type='number' id='cfg_loop_max' style='width:80px;'></label>
-			<label style='display:block;margin-top:4px;'>翻页延迟(ms) 最小 <input type='number' id='cfg_page_min' style='width:80px;'> 最大 <input type='number' id='cfg_page_max' style='width:80px;'></label>
-			<div style='margin-top:6px;display:flex;gap:6px;'>
-				<button id='cfgSaveBtn' style='flex:1;background:#2d7fff;border:0;color:#fff;cursor:pointer;padding:4px 0;border-radius:4px;'>保存</button>
-				<button id='cfgResetBtn' style='flex:1;background:#aa2222;border:0;color:#fff;cursor:pointer;padding:4px 0;border-radius:4px;'>重置</button>
+			<div class='cfg-row'>
+				<span class='cfg-label'>截止日期</span>
+				<input type='date' id='cfg_date_cutoff'>
 			</div>
-			<div id='cfgStatus' style='margin-top:4px;color:#0f0;font-size:11px;'></div>
+			<div class='cfg-row'>
+				<span class='cfg-label'>重置等待(ms)</span>
+				<input type='number' id='cfg_reset_min' placeholder='最小'>
+				<span class='cfg-sep'>~</span>
+				<input type='number' id='cfg_reset_max' placeholder='最大'>
+			</div>
+			<div class='cfg-row'>
+				<span class='cfg-label'>基础延迟(ms)</span>
+				<input type='number' id='cfg_base_min' placeholder='最小'>
+				<span class='cfg-sep'>~</span>
+				<input type='number' id='cfg_base_max' placeholder='最大'>
+			</div>
+			<div class='cfg-row'>
+				<span class='cfg-label'>循环等待(秒)</span>
+				<input type='number' id='cfg_loop_min' placeholder='最小'>
+				<span class='cfg-sep'>~</span>
+				<input type='number' id='cfg_loop_max' placeholder='最大'>
+			</div>
+			<div class='cfg-row'>
+				<span class='cfg-label'>翻页延迟(ms)</span>
+				<input type='number' id='cfg_page_min' placeholder='最小'>
+				<span class='cfg-sep'>~</span>
+				<input type='number' id='cfg_page_max' placeholder='最大'>
+			</div>
+			<div class='cfg-actions'>
+				<button id='cfgSaveBtn'>保存</button>
+				<button id='cfgResetBtn'>重置</button>
+			</div>
+			<div id='cfgStatus' style='margin-top:4px;color:#0f0;font-size:11px;min-height:14px;'></div>
 		</div>`;
 
 		function pad(n){return n.toString().padStart(2,'0');}
@@ -387,6 +423,9 @@
 		}
 	}
 
+	// 现在 LogStorage 和 log() 已就绪，可以安全应用用户配置
+	applyUserConfig();
+
 	// 检查是否请求停止
 	function checkStopRequested() {
 		if(CONFIG.STOP_REQUESTED) {
@@ -533,8 +572,9 @@
 			const recentLogs = logs.slice(-8); // 显示最近8条日志
 			
 			panel.innerHTML = `
-				<div style="border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px;">
+				<div style="border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px; position:relative;">
 					📊 <strong>签证自动化状态监控</strong>
+					<button style="position:absolute;right:0;top:0;background:#2d7fff;color:#fff;border:0;font-size:10px;padding:2px 6px;cursor:pointer;border-radius:3px;" title="显示/隐藏参数设置" onclick="(function(){var p=document.getElementById('usVisaAutoConfigPanel'); if(p){ if(p.style.display==='none'){p.style.display='block'; p.scrollIntoView({behavior:'smooth'});} else {p.style.display='none';} } })()">参数</button>
 				</div>
 				<div>🔄 当前循环: 第${cycleCount}次</div>
 				<div>📝 控制台日志: ${logs.length}/${LogStorage.maxEntries}条 (${Math.round(logs.length/LogStorage.maxEntries*100)}%)</div>
@@ -1610,6 +1650,9 @@
 	
 	// 创建日志状态面板
 	createLogStatusPanel();
+
+	// 创建参数配置面板（默认加载，可用“参数”按钮折叠）
+	createConfigPanel();
 	
 	// 输出快速刷新模式信息
 	log('� 已启用快速刷新模式：约1-3分钟一次循环');
