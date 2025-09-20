@@ -154,7 +154,8 @@
 		'RESET_WAIT_MIN_MS','RESET_WAIT_MAX_MS',
 		'MIN_DELAY','MAX_DELAY',
 		'CONTINUE_SEARCH_WAIT_MIN','CONTINUE_SEARCH_WAIT_MAX',
-		'PAGE_FLIP_DELAY_MIN','PAGE_FLIP_DELAY_MAX'
+		'PAGE_FLIP_DELAY_MIN','PAGE_FLIP_DELAY_MAX',
+		'TARGET_POST'
 	];
 
 	const USER_CONFIG_STORAGE_KEY = 'usVisaAutoUserConfigV1';
@@ -185,6 +186,10 @@
 				if(k === 'DATE_CUTOFF') {
 					const d = new Date(raw[k]);
 					if(!isNaN(d.getTime())) { CONFIG.DATE_CUTOFF = d; applied++; }
+				} else if(k === 'TARGET_POST') {
+					if(typeof raw[k] === 'string' && raw[k].trim()) { 
+						CONFIG.TARGET_POST = raw[k].trim().toUpperCase(); applied++; 
+					}
 				} else if(Number.isFinite(raw[k])) {
 					CONFIG[k] = raw[k]; applied++;
 				}
@@ -209,9 +214,11 @@
 			#usVisaAutoConfigPanel .cfg-row{display:flex;align-items:center;gap:6px;margin-top:4px;}
 			#usVisaAutoConfigPanel .cfg-label{width:105px;text-align:right;color:#ddd;flex-shrink:0;}
 			#usVisaAutoConfigPanel input[type=date],
+			#usVisaAutoConfigPanel input[type=text],
 			#usVisaAutoConfigPanel input[type=number]{background:#111;border:1px solid #444;color:#fff;font:12px monospace;padding:2px 4px;border-radius:3px;}
 			#usVisaAutoConfigPanel input[type=number]{width:72px;}
 			#usVisaAutoConfigPanel input[type=date]{width:145px;}
+			#usVisaAutoConfigPanel input[type=text]{width:145px;}
 			#usVisaAutoConfigPanel .cfg-sep{color:#888;font-size:11px;}
 			#usVisaAutoConfigPanel .cfg-actions{margin-top:8px;display:flex;gap:8px;}
 			#usVisaAutoConfigPanel .cfg-actions button{flex:1;padding:5px 0;font-size:12px;font-weight:bold;border-radius:4px;cursor:pointer;border:0;}
@@ -222,6 +229,10 @@
 			<div class='cfg-row'>
 				<span class='cfg-label'>截止日期</span>
 				<input type='date' id='cfg_date_cutoff'>
+			</div>
+			<div class='cfg-row'>
+				<span class='cfg-label'>目标领事馆</span>
+				<input type='text' id='cfg_target_post' placeholder='TOKYO' style='text-transform:uppercase;'>
 			</div>
 			<div class='cfg-row'>
 				<span class='cfg-label'>重置等待(ms)</span>
@@ -262,6 +273,7 @@
 		// 初始化表单值
 		const dateInput = panel.querySelector('#cfg_date_cutoff');
 		dateInput.value = yyyyMMdd(CONFIG.DATE_CUTOFF);
+		panel.querySelector('#cfg_target_post').value = CONFIG.TARGET_POST;
 		panel.querySelector('#cfg_reset_min').value = CONFIG.RESET_WAIT_MIN_MS;
 		panel.querySelector('#cfg_reset_max').value = CONFIG.RESET_WAIT_MAX_MS;
 		panel.querySelector('#cfg_base_min').value = CONFIG.MIN_DELAY;
@@ -289,6 +301,7 @@
 			const newCfg = {};
 			try {
 				newCfg.DATE_CUTOFF = new Date(dateInput.value + 'T00:00:00');
+				newCfg.TARGET_POST = (panel.querySelector('#cfg_target_post').value || 'TOKYO').trim().toUpperCase();
 				newCfg.RESET_WAIT_MIN_MS = parseInt(panel.querySelector('#cfg_reset_min').value)||CONFIG.RESET_WAIT_MIN_MS;
 				newCfg.RESET_WAIT_MAX_MS = parseInt(panel.querySelector('#cfg_reset_max').value)||CONFIG.RESET_WAIT_MAX_MS;
 				newCfg.MIN_DELAY = parseInt(panel.querySelector('#cfg_base_min').value)||CONFIG.MIN_DELAY;
@@ -656,7 +669,7 @@
 		return selects.some(s => 
 			(s.name||'').toLowerCase().includes('consul') || 
 			(s.id||'').toLowerCase().includes('consul') || 
-			Array.from(s.options||[]).some(o => /consular|post|tokyo|beijing|shanghai/i.test(o.text))
+			Array.from(s.options||[]).some(o => /consular|post|embassy|办事处|领事馆/i.test(o.text))
 		);
 	}
 
@@ -1291,8 +1304,8 @@
 			log('⏳ 服务器更新等待：', resetMinutes, '分钟，确保状态完全更新...');
 			await wait(resetWaitTime);
 			
-			// 重新开始：选择TOKYO
-			log('🏛️ 重新开始，选择TOKYO领事馆...');
+			// 重新开始：选择目标领事馆
+			log('🏛️ 重新开始，选择' + CONFIG.TARGET_POST + '领事馆...');
 			const selectResult = await selectConsularPost(CONFIG.TARGET_POST);
 			
 			if(selectResult) {
