@@ -498,12 +498,71 @@
 				if(button.parentNode) {
 					button.parentNode.removeChild(button);
 				}
-			}, 3000);
+				// 停止按钮移除后，创建开始按钮
+				createStartButton();
+			}, 1500);
 		};
 		
 		// 添加到页面
 		document.body.appendChild(button);
 		log('🔘 已在页面右上角添加停止按钮');
+	}
+
+	function createStartButton() {
+		// 检查是否已存在按钮
+		if(document.getElementById('usVisaAutoStartBtn')) return;
+		
+		const button = document.createElement('button');
+		button.id = 'usVisaAutoStartBtn';
+		button.innerHTML = '▶️ 开始签证脚本';
+		button.style.cssText = `
+			position: fixed;
+			top: 20px;
+			right: 20px;
+			z-index: 10000;
+			background: #22aa22;
+			color: white;
+			border: none;
+			padding: 10px 20px;
+			border-radius: 5px;
+			font-size: 14px;
+			font-weight: bold;
+			cursor: pointer;
+			box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+			transition: all 0.3s ease;
+		`;
+		
+		// 悬停效果
+		button.onmouseover = () => {
+			button.style.background = '#1a8a1a';
+			button.style.transform = 'scale(1.05)';
+		};
+		button.onmouseout = () => {
+			button.style.background = '#22aa22';
+			button.style.transform = 'scale(1)';
+		};
+		
+		// 点击事件
+		button.onclick = () => {
+			button.innerHTML = '🚀 启动中...';
+			button.style.background = '#888';
+			button.disabled = true;
+			
+			// 重启脚本
+			CONFIG.STOP_REQUESTED = false;
+			setTimeout(() => {
+				if(button.parentNode) {
+					button.parentNode.removeChild(button);
+				}
+				// 开始按钮移除后，重新创建停止按钮并启动脚本
+				createStopButton();
+				startVisaAutomation();
+			}, 1000);
+		};
+		
+		// 添加到页面
+		document.body.appendChild(button);
+		log('▶️ 已在页面右上角添加开始按钮');
 	}
 	
 	// 创建下载日志按钮
@@ -664,17 +723,32 @@
 	// ==========================================
 	
 	function isStep1() {
-		// 检测是否为领事馆选择页面
+		// 检测是否需要选择领事馆
 		const selects = Array.from(document.querySelectorAll('select'));
-		return selects.some(s => 
+		const consulateSelect = selects.find(s => 
 			(s.name||'').toLowerCase().includes('consul') || 
-			(s.id||'').toLowerCase().includes('consul') || 
-			Array.from(s.options||[]).some(o => /consular|post|embassy|办事处|领事馆/i.test(o.text))
+			(s.id||'').toLowerCase().includes('consul') ||
+			(s.id||'').toLowerCase().includes('post') || 
+			Array.from(s.options||[]).some(o => /consular|post|embassy|办事处|领事馆|tokyo|beijing|shanghai|mumbai|chennai|hyderabad|kolkata|new\s*delhi/i.test(o.text))
 		);
+		
+		if (!consulateSelect) return false;
+		
+		// 检查当前选中的领事馆是否匹配目标
+		const currentSelected = consulateSelect.options[consulateSelect.selectedIndex];
+		const currentText = (currentSelected?.text || '').trim().toUpperCase();
+		const targetPost = CONFIG.TARGET_POST.toUpperCase();
+		
+		// 如果没有选择或选择的不是目标领事馆，需要执行步骤1
+		return !currentText || currentText !== targetPost;
 	}
 
 	function isStep2() {
-		// 检测是否为日期选择页面
+		// 检测是否需要选择日期
+		// 首先确保领事馆已正确选择
+		if (isStep1()) return false; // 如果还需要选择领事馆，不是步骤2
+		
+		// 检查是否有日期选择相关元素
 		if(document.querySelector('[role=grid], .calendar, .datepicker, .calendar-grid, #datepicker')) return true;
 		const maybeDates = Array.from(document.querySelectorAll('button, a, td, div'))
 			.filter(n => /\d{1,2}\/\d{1,2}|\d{4}-\d{2}-\d{2}|\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/i.test(n.textContent||''))
@@ -684,7 +758,11 @@
 	}
 
 	function isStep3() {
-		// 检测是否为时间段选择页面
+		// 检测是否需要选择时间段
+		// 首先确保前面的步骤已完成
+		if (isStep1() || isStep2()) return false; // 如果还需要选择领事馆或日期，不是步骤3
+		
+		// 检查是否有时间段选择相关元素
 		if(document.querySelector('.timeslot, .time-slot, [data-timeslot], .time-list, #time_select')) return true;
 		return Array.from(document.querySelectorAll('button, a, li, div'))
 			.some(n => /\b\d{1,2}:\d{2}\s*(AM|PM)?\b/i.test(n.textContent||''));
@@ -1220,6 +1298,23 @@
 	
 	async function runStep1() {
 		log('=== 步骤 1: 选择领事馆 ===');
+		
+		// 调试信息：显示当前状态
+		const selects = Array.from(document.querySelectorAll('select'));
+		const consulateSelect = selects.find(s => 
+			(s.name||'').toLowerCase().includes('consul') || 
+			(s.id||'').toLowerCase().includes('consul') ||
+			(s.id||'').toLowerCase().includes('post') || 
+			Array.from(s.options||[]).some(o => /consular|post|embassy|办事处|领事馆|tokyo|beijing|shanghai|mumbai|chennai|hyderabad|kolkata|new\s*delhi/i.test(o.text))
+		);
+		
+		if (consulateSelect) {
+			const currentSelected = consulateSelect.options[consulateSelect.selectedIndex];
+			const currentText = (currentSelected?.text || '').trim();
+			log('🏛️ 当前选中领事馆:', currentText || '(未选择)');
+			log('🎯 目标领事馆:', CONFIG.TARGET_POST);
+		}
+		
 		const success = await selectConsularPost(CONFIG.TARGET_POST);
 		if(success) {
 			log('✅ 步骤1完成: 成功选择', CONFIG.TARGET_POST);
@@ -1560,7 +1655,22 @@
 	// 主要流程调度器
 	// ====================
 	
+	function startVisaAutomation() {
+		log('🚀 启动签证预约自动化脚本...');
+		CONFIG.STOP_REQUESTED = false;
+		cycleCount = 0; // 重置循环计数
+		main().catch(error => {
+			log('❌ 启动失败:', error);
+		});
+	}
+	
 	const main = async () => {
+		// 检查是否请求停止
+		if(CONFIG.STOP_REQUESTED) {
+			log('🛑 检测到停止请求，终止脚本执行');
+			return;
+		}
+		
 		log(`� [第${cycleCount}次循环] 开始美国签证自动预约脚本...`);
 		
 		try {
@@ -1594,21 +1704,32 @@
 			}
 			
 			// 循环完成，准备下一次循环
+			// 检查是否请求停止
+			if(CONFIG.STOP_REQUESTED) {
+				log('🛑 检测到停止请求，终止循环');
+				return;
+			}
+			
 			const waitTime = Math.floor(Math.random() * (CONFIG.CONTINUE_SEARCH_WAIT_MAX - CONFIG.CONTINUE_SEARCH_WAIT_MIN)) + CONFIG.CONTINUE_SEARCH_WAIT_MIN;
 			log(`⏱️ [第${cycleCount}次循环完成] 等待 ${Math.round(waitTime/1000)} 秒后开始下一次循环...`);
 			
 			setTimeout(() => {
 				main().catch(error => {
 					log('❌ 循环执行出错:', error);
-					// 即使出错也继续循环
-					setTimeout(() => main(), 30000); // 30秒后重试
+					// 即使出错也继续循环（如果没有停止请求）
+					if(!CONFIG.STOP_REQUESTED) {
+						setTimeout(() => main(), 30000); // 30秒后重试
+					}
 				});
 			}, waitTime);
 			
 		} catch(error) {
 			log(`❌ [第${cycleCount}次循环] 脚本执行出错:`, error);
-			log('🔄 30秒后自动重试下一次循环...');
-			setTimeout(() => main(), 30000);
+			// 只有在没有停止请求时才重试
+			if(!CONFIG.STOP_REQUESTED) {
+				log('🔄 30秒后自动重试下一次循环...');
+				setTimeout(() => main(), 30000);
+			}
 		}
 	};
 
@@ -1674,10 +1795,7 @@
 	
 	// 自动运行脚本
 	setTimeout(() => {
-		log('🚀 自动启动签证预约脚本...');
-		main().catch(error => {
-			log('❌ 自动运行失败:', error);
-		});
+		startVisaAutomation();
 	}, 1000);
 
 })();
