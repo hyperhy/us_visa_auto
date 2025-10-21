@@ -328,61 +328,232 @@
 	// === LOGGING & UTILITIES / 日志和工具 ===
 	// ==========================================
 	
-	// 简化的日志存储 - 直接记录控制台输出
+	// IndexedDB日志存储 - 支持大容量存储，无下载弹窗
 	const LogStorage = {
-		storageKey: 'visaConsoleLog',
-		maxEntries: 25000, // 最多保存25000条控制台日志（支持约20小时高强度运行，仅占用2.1MB存储）
+		dbName: 'VisaAutoLogs',
+		dbVersion: 1,
+		storeName: 'logs',
+		maxEntries: 1000000, // 增加到100万条，IndexedDB可以轻松处理
+		db: null,
+		fallbackToLocalStorage: false,
+		
+		// 初始化IndexedDB
+		init: async function() {
+			if (!window.indexedDB) {
+				console.warn('⚠️ IndexedDB不支持，降级到localStorage');
+				this.fallbackToLocalStorage = true;
+				return this.initLocalStorage();
+			}
+			
+			return new Promise((resolve, reject) => {
+				const request = indexedDB.open(this.dbName, this.dbVersion);
+				
+				request.onerror = () => {
+					console.warn('⚠️ IndexedDB初始化失败，降级到localStorage');
+					this.fallbackToLocalStorage = true;
+					resolve(this.initLocalStorage());
+				};
+				
+				request.onsuccess = () => {
+					this.db = request.result;
+					console.log('✅ IndexedDB初始化成功');
+					resolve(true);
+				};
+				
+				request.onupgradeneeded = (event) => {
+					const db = event.target.result;
+					if (!db.objectStoreNames.contains(this.storeName)) {
+						const store = db.createObjectStore(this.storeName, { keyPath: 'id', autoIncrement: true });
+						store.createIndex('timestamp', 'timestamp', { unique: false });
+					}
+				};
+			});
+		},
+		
+		// localStorage降级方案
+		initLocalStorage: function() {
+			this.storageKey = 'visaConsoleLog';
+			return true;
+		},
 		
 		// 添加日志条目
-		addEntry: function(logText) {
-			let logs = this.getLogs();
+		addEntry: async function(logText) {
 			const timestamp = new Date().toLocaleString('zh-CN');
 			const entry = `[${timestamp}] ${logText}`;
 			
-			logs.push(entry);
-			
-			// 智能清理：当接近容量上限时，自动清理老日志
-			if(logs.length >= this.maxEntries) {
-				// 自动备份日志到下载
-				const backupMsg = '💾 [自动备份] 日志达到上限，自动下载备份...';
-				console.log(backupMsg);
-				this.downloadLogs();
-				
-				// 完全清空日志，从0开始重新计数
-				logs = [];
-				const cleanupMsg = `🧹 [自动清理] 已清空所有日志，重新开始计数 (0/${this.maxEntries})`;
-				console.log(cleanupMsg);
-				// 这些系统消息不需要再次addEntry，因为会导致递归调用
+			if (this.fallbackToLocalStorage) {
+				return this.addEntryLocalStorage(entry);
 			}
 			
-			localStorage.setItem(this.storageKey, JSON.stringify(logs));
+			return new Promise((resolve, reject) => {
+				const transaction = this.db.transaction([this.storeName], 'readwrite');
+				const store = transaction.objectStore(this.storeName);
+				
+				const logEntry = {
+					content: entry,
+					timestamp: Date.now(),
+					created: new Date().toISOString()
+				};
+				
+				const request = store.add(logEntry);
+				
+				request.onsuccess = async () => {
+					// 检查是否需要清理老日志
+					await this.cleanupOldLogs();
+					resolve();
+				};
+				
+				request.onerror = () => {
+					console.error('❌ 添加日志失败:', request.error);
+					reject(request.error);
+				};
+			});
+		},
+		
+		// localStorage降级添加日志
+		addEntryLocalStorage: function(entry) {
+			try {
+				let logs = JSON.parse(localStorage.getItem(this.storageKey) || '[]');
+				logs.push(entry);
+				
+				// 使用循环覆盖策略，避免下载弹窗
+				if (logs.length > this.maxEntries) {
+					logs = logs.slice(-this.maxEntries + 1000); // 保留最新的数据
+					console.log(`� [循环清理] 保留最新 ${logs.length} 条日志`);
+				}
+				
+				localStorage.setItem(this.storageKey, JSON.stringify(logs));
+			} catch(e) {
+				console.error('❌ localStorage添加日志失败:', e);
+			}
+		},
+		
+		// 清理老日志（IndexedDB）
+		cleanupOldLogs: async function() {
+			return new Promise((resolve) => {
+				const transaction = this.db.transaction([this.storeName], 'readonly');
+				const store = transaction.objectStore(this.storeName);
+				const countRequest = store.count();
+				
+				countRequest.onsuccess = () => {
+					const count = countRequest.result;
+					if (count > this.maxEntries) {
+						const deleteCount = count - this.maxEntries + 5000; // 一次删除5000条老日志
+						this.deleteOldestLogs(deleteCount).then(() => {
+							console.log(`🧹 [自动清理] 删除了 ${deleteCount} 条老日志，当前总数: ${this.maxEntries - 5000}`);
+							resolve();
+						});
+					} else {
+						resolve();
+					}
+				};
+			});
+		},
+		
+		// 删除最老的日志
+		deleteOldestLogs: async function(count) {
+			return new Promise((resolve) => {
+				const transaction = this.db.transaction([this.storeName], 'readwrite');
+				const store = transaction.objectStore(this.storeName);
+				const request = store.openCursor();
+				
+				let deleted = 0;
+				request.onsuccess = (event) => {
+					const cursor = event.target.result;
+					if (cursor && deleted < count) {
+						cursor.delete();
+						deleted++;
+						cursor.continue();
+					} else {
+						resolve();
+					}
+				};
+			});
 		},
 		
 		// 获取所有日志
-		getLogs: function() {
-			try {
-				return JSON.parse(localStorage.getItem(this.storageKey) || '[]');
-			} catch(e) {
-				console.error('❌ 读取控制台日志失败:', e);
-				return [];
+		getLogs: async function() {
+			if (this.fallbackToLocalStorage) {
+				try {
+					return JSON.parse(localStorage.getItem(this.storageKey) || '[]');
+				} catch(e) {
+					console.error('❌ 读取localStorage日志失败:', e);
+					return [];
+				}
 			}
+			
+			return new Promise((resolve) => {
+				const transaction = this.db.transaction([this.storeName], 'readonly');
+				const store = transaction.objectStore(this.storeName);
+				const request = store.getAll();
+				
+				request.onsuccess = () => {
+					const logs = request.result.map(item => item.content);
+					resolve(logs);
+				};
+				
+				request.onerror = () => {
+					console.error('❌ 读取IndexedDB日志失败:', request.error);
+					resolve([]);
+				};
+			});
+		},
+		
+		// 获取日志数量
+		getLogCount: async function() {
+			if (this.fallbackToLocalStorage) {
+				try {
+					return JSON.parse(localStorage.getItem(this.storageKey) || '[]').length;
+				} catch(e) {
+					return 0;
+				}
+			}
+			
+			return new Promise((resolve) => {
+				const transaction = this.db.transaction([this.storeName], 'readonly');
+				const store = transaction.objectStore(this.storeName);
+				const request = store.count();
+				
+				request.onsuccess = () => resolve(request.result);
+				request.onerror = () => resolve(0);
+			});
 		},
 		
 		// 清空日志
-		clearLogs: function() {
-			localStorage.removeItem(this.storageKey);
-			const clearMsg = '🗑️ 已清空控制台日志';
-			console.log(clearMsg);
-			// 清空操作不保存到日志，因为日志已经被清空了
+		clearLogs: async function() {
+			if (this.fallbackToLocalStorage) {
+				localStorage.removeItem(this.storageKey);
+				console.log('🗑️ 已清空localStorage日志');
+				return;
+			}
+			
+			return new Promise((resolve) => {
+				const transaction = this.db.transaction([this.storeName], 'readwrite');
+				const store = transaction.objectStore(this.storeName);
+				const request = store.clear();
+				
+				request.onsuccess = () => {
+					console.log('🗑️ 已清空IndexedDB日志');
+					resolve();
+				};
+				
+				request.onerror = () => {
+					console.error('❌ 清空日志失败:', request.error);
+					resolve();
+				};
+			});
 		},
 		
-		// 下载日志
-		downloadLogs: function() {
-			const logs = this.getLogs();
+		// 下载日志（支持异步）
+		downloadLogs: async function() {
+			const logs = await this.getLogs();
+			const count = await this.getLogCount();
+			
 			let content = '=== 美国签证自动化控制台日志 ===\n';
 			content += `导出时间: ${new Date().toLocaleString('zh-CN')}\n`;
 			content += `当前循环: 第${cycleCount}次\n`;
-			content += `总计日志: ${logs.length} 条\n\n`;
+			content += `总计日志: ${count} 条\n`;
+			content += `存储方式: ${this.fallbackToLocalStorage ? 'localStorage' : 'IndexedDB'}\n\n`;
 			content += logs.join('\n');
 			
 			const blob = new Blob([content], {type: 'text/plain;charset=utf-8'});
@@ -399,33 +570,44 @@
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
 			
-			const downloadMsg = '💾 控制台日志已下载 - 建议移动到Downloads/us_visa_auto/文件夹';
+			const downloadMsg = `💾 控制台日志已下载 (${count}条) - 建议移动到Downloads/us_visa_auto/文件夹`;
 			console.log(downloadMsg);
-			console.log('📁 在Windows中创建Downloads/us_visa_auto文件夹来整理日志文件');
+			console.log('📁 在系统中创建Downloads/us_visa_auto文件夹来整理日志文件');
 			// 下载消息不需要保存到日志，因为会影响下载的文件内容
 		}
 	};
 
-	// 🔄 初始化LogStorage后，处理之前的系统日志
-	(function initializeSystemLogs() {
-		if(window.tempSystemLogs && window.tempSystemLogs.length > 0) {
-			window.tempSystemLogs.forEach(logMsg => {
-				LogStorage.addEntry('[🛡️ System] ' + logMsg);
-			});
-			delete window.tempSystemLogs; // 清理临时日志
+	// 🔄 初始化LogStorage（异步）
+	(async function initializeLogStorage() {
+		try {
+			await LogStorage.init();
+			
+			// 处理之前的系统日志
+			if(window.tempSystemLogs && window.tempSystemLogs.length > 0) {
+				for (const logMsg of window.tempSystemLogs) {
+					await LogStorage.addEntry('[🛡️ System] ' + logMsg);
+				}
+				delete window.tempSystemLogs; // 清理临时日志
+			}
+			
+			console.log('📋 日志系统初始化完成');
+		} catch(e) {
+			console.error('❌ 日志系统初始化失败:', e);
 		}
 	})();
 
 	function log(...args) { 
 		const logText = '[🎯 US-Visa-Auto] ' + args.join(' ');
 		console.log(logText);
-		LogStorage.addEntry(logText);
+		// 异步添加日志，不阻塞主流程
+		LogStorage.addEntry(logText).catch(e => console.error('日志添加失败:', e));
 	}
 	
 	function tlog(...args) { 
 		const logText = '[⏰ Timeslot] ' + args.join(' ');
 		console.log(logText);
-		LogStorage.addEntry(logText);
+		// 异步添加日志，不阻塞主流程
+		LogStorage.addEntry(logText).catch(e => console.error('日志添加失败:', e));
 	}
 	
 	function vlog(...args) {
@@ -638,34 +820,37 @@
 			box-shadow: 0 4px 8px rgba(0,0,0,0.3);
 		`;
 		
-		// 更新面板内容的函数
-		window.updateLogPanel = function() {
-			const logs = LogStorage.getLogs();
-			const recentLogs = logs.slice(-8); // 显示最近8条日志
-			
-			panel.innerHTML = `
-				<div style="border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px; position:relative;">
-					📊 <strong>签证自动化状态监控</strong>
-					<button style="position:absolute;right:0;top:0;background:#2d7fff;color:#fff;border:0;font-size:10px;padding:2px 6px;cursor:pointer;border-radius:3px;" title="显示/隐藏参数设置" onclick="(function(){var p=document.getElementById('usVisaAutoConfigPanel'); if(p){ if(p.style.display==='none'){p.style.display='block'; p.scrollIntoView({behavior:'smooth'});} else {p.style.display='none';} } })()">参数</button>
-				</div>
-				<div>🔄 当前循环: 第${cycleCount}次</div>
-				<div>📝 控制台日志: ${logs.length}/${LogStorage.maxEntries}条 (${Math.round(logs.length/LogStorage.maxEntries*100)}%)</div>
-				<div>⏰ 最后更新: ${new Date().toLocaleTimeString()}</div>
-				${logs.length > LogStorage.maxEntries * 0.95 ? 
-					'<div style="color: #ff6600;">🚨 日志存储已使用95%+ (即将自动备份)</div>' : 
-					logs.length > LogStorage.maxEntries * 0.85 ? 
-					'<div style="color: #ffaa00;">⚠️ 日志存储已使用85%+</div>' : ''
-				}
-				<div style="margin-top: 8px; border-top: 1px solid #333; padding-top: 5px;">
-					<strong>📋 最近日志:</strong>
-					<button onclick="LogStorage.downloadLogs()" 
-							style="float: right; font-size: 10px; padding: 2px 6px; background: #4444ff; color: white; border: none; border-radius: 3px; cursor: pointer; margin-left: 5px;">
-						💾 下载
-					</button>
-					<button onclick="if(confirm('确认清理所有日志？')) { LogStorage.clearLogs(); updateLogPanel(); }" 
-							style="float: right; font-size: 10px; padding: 2px 6px; background: #ff4444; color: white; border: none; border-radius: 3px; cursor: pointer;">
-						🧹 清理
-					</button>
+		// 更新面板内容的函数（异步）
+		window.updateLogPanel = async function() {
+			try {
+				const logs = await LogStorage.getLogs();
+				const count = await LogStorage.getLogCount();
+				const recentLogs = logs.slice(-8); // 显示最近8条日志
+				
+				panel.innerHTML = `
+					<div style="border-bottom: 1px solid #333; margin-bottom: 5px; padding-bottom: 5px; position:relative;">
+						📊 <strong>签证自动化状态监控</strong>
+						<button style="position:absolute;right:0;top:0;background:#2d7fff;color:#fff;border:0;font-size:10px;padding:2px 6px;cursor:pointer;border-radius:3px;" title="显示/隐藏参数设置" onclick="(function(){var p=document.getElementById('usVisaAutoConfigPanel'); if(p){ if(p.style.display==='none'){p.style.display='block'; p.scrollIntoView({behavior:'smooth'});} else {p.style.display='none';} } })()">参数</button>
+					</div>
+					<div>🔄 当前循环: 第${cycleCount}次</div>
+					<div>📝 控制台日志: ${count}/${LogStorage.maxEntries}条 (${Math.round(count/LogStorage.maxEntries*100)}%)</div>
+					<div>💾 存储类型: ${LogStorage.fallbackToLocalStorage ? 'localStorage' : 'IndexedDB'}</div>
+					<div>⏰ 最后更新: ${new Date().toLocaleTimeString()}</div>
+					${count > LogStorage.maxEntries * 0.95 ? 
+						'<div style="color: #ff6600;">🚨 日志存储已使用95%+ (自动清理中)</div>' : 
+						count > LogStorage.maxEntries * 0.85 ? 
+						'<div style="color: #ffaa00;">⚠️ 日志存储已使用85%+</div>' : ''
+					}
+					<div style="margin-top: 8px; border-top: 1px solid #333; padding-top: 5px;">
+						<strong>📋 最近日志:</strong>
+						<button onclick="LogStorage.downloadLogs()" 
+								style="float: right; font-size: 10px; padding: 2px 6px; background: #4444ff; color: white; border: none; border-radius: 3px; cursor: pointer; margin-left: 5px;">
+							💾 下载
+						</button>
+						<button onclick="if(confirm('确认清理所有日志？')) { LogStorage.clearLogs().then(() => updateLogPanel()); }" 
+								style="float: right; font-size: 10px; padding: 2px 6px; background: #ff4444; color: white; border: none; border-radius: 3px; cursor: pointer;">
+							🧹 清理
+						</button>
 				</div>
 				<div>
 					${recentLogs.map(log => {
@@ -681,6 +866,15 @@
 					}).join('')}
 				</div>
 			`;
+			} catch(e) {
+				console.error('❌ 更新日志面板失败:', e);
+				panel.innerHTML = `
+					<div style="color: #ff6666;">
+						❌ 日志面板更新失败<br>
+						${e.message}
+					</div>
+				`;
+			}
 		};
 		
 		// 初始化面板内容
